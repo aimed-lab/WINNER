@@ -5,6 +5,12 @@ The code rank the most important genes in a gene lists (seed genes) using their 
 
 To run this code in a simple case, please look at the example in folder NeonatalHeartCaseStudy.
 
+## Citing us:
+Please cite the following publication:
+
+Nguyen T, Yue Z, Slominski R, Welner R, Zhang J, Chen JY. WINNER: A network biology tool for biomolecular characterization and prioritization. Front Big Data. 2022 Nov 4;5:1016606. doi: 10.3389/fdata.2022.1016606. PMID: 36407327; PMCID: PMC9672476.
+
+
 ## Input files:
 GeneList.txt. This file has two columns. The first column is the gene name. The second column indicates whether the genes are seeded or expanded genes.
 Interaction.txt. This file has three columns. The first two columns tell which two genes interact, and the third column tells how strong the interaction is. The third column should be normalized between 0 and 1 for better result.
