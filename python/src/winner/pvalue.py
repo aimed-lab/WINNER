@@ -34,31 +34,44 @@ def expansion_pvalue(
         n = number of seed genes
         k = number of distinct seed genes *c* interacts with
 
-    Returns ``P(X >= k)`` for each candidate.
+    Returns ``P(X >= k)`` for each candidate. Fully vectorised: the neighbour
+    counts come from a pandas groupby + merge, and ``hypergeom.sf`` is called
+    once on the whole array.
     """
-    seed_set = set(seed_genes)
-    n = len(seed_set)
+    n_seed = len(set(seed_genes))
     candidates = list(candidate_genes)
     if not candidates:
         return np.zeros(0, dtype=np.float64)
 
-    neighbours_of: dict[str, set[str]] = {c: set() for c in candidates}
     cand_set = set(candidates)
-    g1 = interactions["gene1"].to_numpy()
-    g2 = interactions["gene2"].to_numpy()
-    for a, b in zip(g1, g2):
-        if a in cand_set:
-            neighbours_of[a].add(b)
-        if b in cand_set:
-            neighbours_of[b].add(a)
+    seed_set = set(seed_genes)
+
+    # Collect every (candidate, neighbour) appearance in one vectorised step
+    # by concatenating both directions of the edge list and then filtering.
+    all_src = np.concatenate([
+        interactions["gene1"].to_numpy(),
+        interactions["gene2"].to_numpy(),
+    ])
+    all_dst = np.concatenate([
+        interactions["gene2"].to_numpy(),
+        interactions["gene1"].to_numpy(),
+    ])
+    src_in_cand = np.isin(all_src, list(cand_set))
+    dst_in_seed = np.isin(all_dst, list(seed_set))
+    mask = src_in_cand & dst_in_seed
+    # unique (candidate, neighbour) pairs — "distinct seed neighbours"
+    pairs = pd.DataFrame({"cand": all_src[mask], "seed": all_dst[mask]}).drop_duplicates()
+    hits_per_cand = pairs.groupby("cand").size().to_dict()
+
+    hits = np.array([hits_per_cand.get(c, 0) for c in candidates], dtype=np.int64)
+    K = np.array([int(global_degree.get(c, 0)) for c in candidates], dtype=np.int64)
 
     pvals = np.ones(len(candidates), dtype=np.float64)
-    for i, c in enumerate(candidates):
-        K = int(global_degree.get(c, 0))
-        if K <= 0:
-            continue
-        hits = len(neighbours_of[c] & seed_set)
-        pvals[i] = float(hypergeom.sf(hits - 1, total_connected_genes, K, n))
+    valid = K > 0
+    if valid.any():
+        pvals[valid] = hypergeom.sf(
+            hits[valid] - 1, total_connected_genes, K[valid], n_seed
+        )
     return pvals
 
 

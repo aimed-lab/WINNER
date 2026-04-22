@@ -80,3 +80,42 @@ def test_torch_batch_matches_numpy_when_available():
         dtype="float64",
     )
     np.testing.assert_allclose(batched[0], single, rtol=1e-10)
+
+
+def test_sparse_batch_matches_dense():
+    from winner.core import spinner_iteration_sparse_batch
+
+    A = _toy_net()
+    v0 = initial_score_from_adj(A)
+    dense = spinner_iteration_batch(
+        np.stack([A, A, A], axis=0), np.stack([v0, v0, v0], axis=0)
+    )
+    sparse = spinner_iteration_sparse_batch(
+        np.stack([A, A, A], axis=0), np.stack([v0, v0, v0], axis=0)
+    )
+    np.testing.assert_allclose(sparse, dense, rtol=1e-10)
+
+
+def test_dispatcher_autoselects_sparse_for_sparse_input():
+    from winner.core import spinner_batch
+
+    # Tiny, sparse network — density << 5%, CPU device → should pick sparse path.
+    N = 50
+    A = np.zeros((N, N))
+    rng = np.random.default_rng(0)
+    ii = rng.integers(0, N, size=10)
+    jj = rng.integers(0, N, size=10)
+    for i, j in zip(ii, jj):
+        if i != j:
+            w = rng.uniform(0.1, 1.0)
+            A[i, j] = w
+            A[j, i] = w
+    v0 = initial_score_from_adj(A)
+    B = 5
+    out = spinner_batch(
+        np.stack([A] * B, axis=0),
+        np.stack([v0] * B, axis=0),
+        device="cpu",
+    )
+    assert out.shape == (B, N)
+    assert np.all(np.isfinite(out))

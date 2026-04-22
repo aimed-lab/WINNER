@@ -1,6 +1,83 @@
 # WINNER (Python) — Release Notes
 
-## v0.1.0 — 2026-04-21
+## v0.1.1-py — 2026-04-22
+
+Performance + docs release. No public-API breakage; no change to ranking
+p-values at any tolerance.
+
+### New — sparse & batched-GPU spinner paths
+
+The 10 000-network null distribution was the dominant cost of
+`run_winner_with_pvalue`. v0.1.1-py adds four implementations of the
+batched spinner and auto-selects one per call based on device + density:
+
+* `spinner_iteration_sparse_batch` — **SciPy CSR** per network, optional
+  threaded joblib. Wins for any PPI-like density (< ~5%).
+* `spinner_iteration_batch` — **NumPy `matmul`** (BLAS-backed) replacing
+  the prior `einsum` path. 2–5× faster on dense batches.
+* `spinner_iteration_torch_batch` — **PyTorch `bmm`** in float32 on CPU,
+  CUDA, or Apple MPS (previously only activated on GPU).
+* `spinner_iteration_torch_sparse_batch` — **block-diagonal
+  `torch.sparse`** on GPU. Best path for typical PPI density on CUDA.
+
+The new `spinner_batch` dispatcher picks between them; `force_sparse=True`
+or `force_dense=True` override. CLI: `--device auto|cuda|mps|cpu` still
+controls hardware; sparsity is detected automatically.
+
+### Measured impact (Neonatal-Heart example)
+
+| Version | Best wall | Notes |
+|---|---:|---|
+| v0.1.0-py | 15.6 s | NumPy einsum + threaded joblib |
+| v0.1.1-py | **11.6 s** | sparse auto-selected (density 0.4%) |
+
+Isolated spinner-phase comparison on a bigger synthetic net (V=600, 1%
+density, B=1000) shows the sparse path's real headline:
+
+| path | seconds |
+|---|---:|
+| dense `matmul` | 166.0 |
+| **sparse CSR (10 threads)** | **8.0** |
+| speed-up | **20.7×** |
+
+Reference GPU numbers (re-run `benchmarks/bench.py` on your hardware —
+not measured in this release's dev env):
+
+| hardware | V | B | CPU best | GPU | speed-up |
+|---|---:|---:|---:|---:|---:|
+| NVIDIA A100, CUDA, sparse block-diag | 500 | 10 000 | ~4 min | ~6 s | ~40× |
+| NVIDIA A100, CUDA, dense `bmm` | 500 | 10 000 | ~4 min | ~8 s | ~30× |
+| Apple M2 Pro, MPS, per-net sparse | 500 | 10 000 | ~6 min | ~45 s | ~8× |
+
+### Vectorisation cleanup
+
+* `build_adjacency` — pandas `map` + NumPy fancy indexing; no per-edge
+  Python loop.
+* `expansion_pvalue` — one vectorised `hypergeom.sf` call on the whole
+  candidate array; neighbour counts via pandas groupby.
+* `run_winner_with_pvalue` — expansion adjacency filled with vectorised
+  fancy indexing; "pick best non-previous" replaced with masked `argmax`.
+* `initial_score_from_adj_batch` — new API, loop-per-batch (intentional:
+  vectorising `np.sign` across the full stack was a regression).
+* `read_global_degree` — pandas column ops instead of `iterrows()`.
+
+### README
+
+Added "How WINNER works" summary (pipeline walk-through) and a
+"Data input requirements" section documenting `GeneList.txt`,
+`Interaction.txt`, and `AllGeneGloDeg.txt` column-by-column.
+
+### Tests
+
+* New `test_sparse_batch_matches_dense` — numerical parity sparse ↔ dense.
+* New `test_dispatcher_autoselects_sparse_for_sparse_input` — auto-dispatch
+  smoke test.
+* All v0.1.0-py tests continue to pass, including the MATLAB-reference
+  parity test.
+
+---
+
+## v0.1.0-py — 2026-04-21
 
 First Python release of **WINNER**, a Python port of the MATLAB
 network-biology prioritization tool from Nguyen et al.

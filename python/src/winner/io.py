@@ -52,15 +52,9 @@ def read_global_degree(path: str | Path) -> dict[str, int]:
     ``_HUMAN`` suffixes are stripped (matches ``RunWinner_withPValue.m``).
     """
     df = pd.read_csv(path, sep="\t", header=None, engine="python")
-    out: dict[str, int] = {}
-    for _, row in df.iterrows():
-        key = str(row[0]).replace("_HUMAN", "").strip()
-        try:
-            val = int(row[1])
-        except (TypeError, ValueError):
-            val = 0
-        out[key] = val
-    return out
+    keys = df.iloc[:, 0].astype(str).str.replace("_HUMAN", "", regex=False).str.strip()
+    vals = pd.to_numeric(df.iloc[:, 1], errors="coerce").fillna(0).astype(int)
+    return dict(zip(keys.tolist(), vals.tolist()))
 
 
 def build_adjacency(
@@ -72,21 +66,26 @@ def build_adjacency(
     Only edges where both endpoints appear in ``gene_names`` are kept. If the
     same pair appears multiple times the latest weight wins (matches MATLAB's
     overwriting behaviour in ``RunWinner.m``).
+
+    Vectorised: no Python edge-loop. Pandas ``map`` resolves names to indices,
+    then NumPy fancy indexing writes both triangles in two assignments.
     """
     names = list(gene_names)
-    index = {name: i for i, name in enumerate(names)}
     n = len(names)
-    adj = np.zeros((n, n), dtype=np.float64)
-    g1 = interactions["gene1"].to_numpy()
-    g2 = interactions["gene2"].to_numpy()
+    name_to_idx = pd.Series(np.arange(n, dtype=np.int64), index=names)
+
+    idx1 = interactions["gene1"].map(name_to_idx).to_numpy()
+    idx2 = interactions["gene2"].map(name_to_idx).to_numpy()
     w = interactions["weight"].to_numpy(dtype=np.float64)
-    for a, b, weight in zip(g1, g2, w):
-        i = index.get(a)
-        j = index.get(b)
-        if i is None or j is None:
-            continue
-        adj[i, j] = weight
-        adj[j, i] = weight
+
+    valid = (~pd.isna(idx1)) & (~pd.isna(idx2))
+    i = idx1[valid].astype(np.int64)
+    j = idx2[valid].astype(np.int64)
+    ww = w[valid]
+
+    adj = np.zeros((n, n), dtype=np.float64)
+    adj[i, j] = ww
+    adj[j, i] = ww
     return adj
 
 
