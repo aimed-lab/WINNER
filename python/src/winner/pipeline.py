@@ -17,9 +17,9 @@ from .core import (
     DEFAULT_MAX_ITER,
     DEFAULT_SIGMA,
     initial_score_from_adj,
+    initial_score_from_adj_batch,
+    spinner_batch,
     spinner_iteration,
-    spinner_iteration_batch,
-    spinner_iteration_torch_batch,
 )
 from .io import build_adjacency
 from .pvalue import bh_fdr, expansion_pvalue, ranking_pvalue
@@ -88,19 +88,20 @@ def _batched_spinner(
     sigma: float,
     device: str,
     chunk: int,
+    n_jobs: int = 1,
 ) -> np.ndarray:
     B = adj_stack.shape[0]
     out = np.empty((B, adj_stack.shape[1]), dtype=np.float64)
     for start in range(0, B, chunk):
         end = min(B, start + chunk)
-        a = adj_stack[start:end]
-        v = v0_stack[start:end]
-        if device == "cpu":
-            out[start:end] = spinner_iteration_batch(a, v, max_iter=max_iter, sigma=sigma)
-        else:
-            out[start:end] = spinner_iteration_torch_batch(
-                a, v, max_iter=max_iter, sigma=sigma, device=device
-            )
+        out[start:end] = spinner_batch(
+            adj_stack[start:end],
+            v0_stack[start:end],
+            max_iter=max_iter,
+            sigma=sigma,
+            device=device,
+            n_jobs=n_jobs,
+        )
     return out
 
 
@@ -167,43 +168,45 @@ def run_winner_with_pvalue(
     full_net = np.zeros((n_full, n_full), dtype=np.float64)
     full_net[:n_seed, :n_seed] = seed_adj
 
-    full_index = {g: i for i, g in enumerate(full_nodes)}
-    cand_set = set(kept_candidates)
-    g1 = interactions["gene1"].to_numpy()
-    g2 = interactions["gene2"].to_numpy()
+    # Vectorised fill of the seed-to-candidate and candidate-to-candidate
+    # blocks. Only edges with at least one candidate endpoint are new; the
+    # seed-seed block is already copied from ``seed_adj``.
+    full_index = pd.Series(np.arange(n_full, dtype=np.int64), index=full_nodes)
+    i1 = interactions["gene1"].map(full_index).to_numpy()
+    i2 = interactions["gene2"].map(full_index).to_numpy()
     w = interactions["weight"].to_numpy(dtype=np.float64)
-    for a, b, weight in zip(g1, g2, w):
-        i1 = full_index.get(a) if a in cand_set else None
-        i2 = full_index.get(b)
-        if i1 is not None and i2 is not None:
-            full_net[i1, i2] = weight
-            full_net[i2, i1] = weight
-        i1 = full_index.get(b) if b in cand_set else None
-        i2 = full_index.get(a)
-        if i1 is not None and i2 is not None:
-            full_net[i1, i2] = weight
-            full_net[i2, i1] = weight
+    valid = (~pd.isna(i1)) & (~pd.isna(i2))
+    i1v = i1[valid].astype(np.int64)
+    i2v = i2[valid].astype(np.int64)
+    wv = w[valid]
+    touches_candidate = (i1v >= n_seed) | (i2v >= n_seed)
+    i1v = i1v[touches_candidate]
+    i2v = i2v[touches_candidate]
+    wv = wv[touches_candidate]
+    full_net[i1v, i2v] = wv
+    full_net[i2v, i1v] = wv
 
     previous_idx = list(range(n_seed))
+    in_previous = np.zeros(n_full, dtype=bool)
+    in_previous[:n_seed] = True
     previous_nodes = list(seed_names)
     node_origin = ["S"] * n_seed
     previous_score = seed_score
 
     num_extend = len(kept_candidates)
     iterations_log: list[dict] = []
+    neg_inf = np.float64(-np.inf)
     for _ in range(min(num_extend, max_expansions)):
         rank_score = np.zeros(n_full, dtype=np.float64)
         rank_score[previous_idx] = previous_score
         propagated = full_net.T @ rank_score
-        order = np.argsort(-propagated)
-        added = None
-        for candidate in order:
-            if candidate not in previous_idx:
-                added = int(candidate)
-                break
-        if added is None:
+        # Mask out already-added nodes and argmax in one shot.
+        propagated = np.where(in_previous, neg_inf, propagated)
+        added = int(np.argmax(propagated))
+        if propagated[added] == neg_inf:
             break
         previous_idx.append(added)
+        in_previous[added] = True
         previous_nodes.append(full_nodes[added])
         node_origin.append("E")
 
@@ -239,11 +242,9 @@ def run_winner_with_pvalue(
             seed=random_seed,
             n_jobs=n_jobs,
         )
-        v0_stack = np.stack(
-            [initial_score_from_adj(rand_stack[b]) for b in range(num_random)], axis=0
-        )
+        v0_stack = initial_score_from_adj_batch(rand_stack)
         random_scores = _batched_spinner(
-            rand_stack, v0_stack, max_iter, sigma, resolved, chunk
+            rand_stack, v0_stack, max_iter, sigma, resolved, chunk, n_jobs=n_jobs
         ).T  # (N, R)
         ranking_p = ranking_pvalue(final_score, random_scores)
     else:

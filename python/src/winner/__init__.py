@@ -6,17 +6,27 @@ Reference:
     Front Big Data. 2022;5:1016606. doi:10.3389/fdata.2022.1016606
 """
 
-from .core import spinner_iteration, spinner_iteration_batch, initial_score_from_adj
+from .core import (
+    initial_score_from_adj,
+    initial_score_from_adj_batch,
+    spinner_batch,
+    spinner_iteration,
+    spinner_iteration_batch,
+    spinner_iteration_sparse_batch,
+)
 from .io import read_gene_list, read_interactions, build_adjacency, write_winner_result
 from .pipeline import run_winner, run_winner_with_pvalue, WinnerResult, WinnerPValueResult
 from .backend import get_backend, available_devices
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "spinner_iteration",
     "spinner_iteration_batch",
+    "spinner_iteration_sparse_batch",
+    "spinner_batch",
     "initial_score_from_adj",
+    "initial_score_from_adj_batch",
     "read_gene_list",
     "read_interactions",
     "build_adjacency",

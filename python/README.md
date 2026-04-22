@@ -6,6 +6,109 @@ network-biology gene-prioritization tool from Nguyen et al.
 
 > **Maintainer:** Dr. Jake Y. Chen &nbsp;·&nbsp; AIMed Lab, UAB &nbsp;·&nbsp; `jakechen@uab.edu`
 
+## How WINNER works
+
+WINNER scores genes in a biological network so the most
+biologically-relevant ones rise to the top. You give it a small list of
+*seed* genes (your prior of interest — e.g. GWAS hits, differentially
+expressed genes, curated disease genes) and a background
+protein-protein-interaction (PPI) graph; WINNER returns a ranked score
+for every gene and, optionally, adds additional *expansion* genes that
+are well-supported neighbours of your seeds.
+
+**Pipeline**
+
+1. **Build the weighted adjacency** `A` from your interaction list.
+   `A[i, j]` is the `combined_score` of the edge between gene *i* and
+   gene *j* (undirected; typically a STRING-style value in `[0, 1]`).
+2. **Initial score** `v₀[i] = (weighted_degree[i])² / degree[i]` —
+   giving extra mass to hubs with strong edges (matches
+   `exp(2·log(wdeg) - log(deg))` in the MATLAB source).
+3. **Spinner iteration** — a personalized-PageRank fixed-point
+   computed for 100 iterations at damping `σ = 0.85`:
+
+   ```
+   v_{t+1} = (1 - σ) · v₀ + σ · Aᵀ · v_t
+   ```
+
+   where `A` is row-stochastic. The returned `v_100` is the
+   **winner score** (higher = more important).
+4. **Expansion p-value** (optional). For each candidate expansion gene,
+   a hypergeometric test asks: *given this gene's global connectivity,
+   is its overlap with the seed set larger than chance?* Candidates are
+   filtered at FDR-adjusted `p < 0.05`.
+5. **Iterative expansion** (optional). Up to 50 top-ranked candidates
+   are added one at a time; after each addition the spinner re-scores
+   the new network.
+6. **Ranking p-value** (optional). 10 000 degree-preserving random
+   networks are generated (symmetric edge-swap) and re-scored. For
+   each gene, the ranking p-value is the empirical fraction of random
+   scores ≥ its real score. Low p ⇒ the gene's prominence is unlikely
+   under a degree-matched null.
+
+The expensive step by far is #6 (10 000 × spinner on an expanded
+network). This Python port accelerates that via multi-threaded CPU
+rewiring + a batched GPU personalized-PageRank.
+
+## Data input requirements
+
+All inputs are **tab-delimited text** with a header row; columns match
+the MATLAB version exactly. Example files live in
+[`tests/data/`](tests/data).
+
+### `GeneList.txt` — required
+
+| column | name | meaning |
+|---|---|---|
+| 1 | `Gene` | gene identifier (symbol or UniProt; must match the Interaction and GlobalDegree files) |
+| 2 | `IsSeeded` | `S` if this gene is a **seed**, `E` if it's an **expansion candidate** to be scored |
+
+```
+Gene	IsSeeded
+CBX7	S
+NCF4	S
+MYH11	S
+...
+BRCA1	E
+```
+
+### `Interaction.txt` — required
+
+| column | name | meaning |
+|---|---|---|
+| 1 | `node1` | gene identifier (same namespace as `GeneList.txt`) |
+| 2 | `node2` | gene identifier |
+| 3 | `combined_score` | edge weight, **normalised to `[0, 1]`** for best results |
+
+```
+#node1	node2	combined_score
+ACSL6	LIPG	0.686
+ADAM12	PAPP-A	0.557
+ADAMTS15	ADAMTS20	0.923
+```
+
+The graph is treated as undirected — listing an edge once is enough
+(listing both directions is also OK; the later weight wins).
+
+### `AllGeneGloDeg.txt` — required for `winner-pvalue` only
+
+| column | name | meaning |
+|---|---|---|
+| 1 | gene id | same namespace (a trailing `_HUMAN` suffix is auto-stripped to match UniProt conventions) |
+| 2 | global degree | number of gene-gene interactions for this gene in the *whole* PPI database (not just your subnet) |
+
+Used by the hypergeometric expansion test. If you change PPI databases,
+regenerate this file — `--total-connected-genes` (default 9967 for
+HAPPI v2.0) lets you override the universe size.
+
+### Output
+
+`winner` writes three columns: `geneName`, `seedOrExpand`, `winnerScore`.
+`winner-pvalue` writes four: `finalGeneList`, `finalScore`,
+`expansionPVal`, `rankingPVal` (`NaN` expansion p-value for seed rows).
+
+---
+
 The original implementation is MATLAB; this port preserves its numerical
 behaviour and adds three scalability improvements:
 
@@ -116,46 +219,72 @@ simple.to_frame().to_csv("out.tsv", sep="\t", index=False)
 
 ## Parallelism — where the speed-ups come from
 
-| Stage | CPU | GPU |
-|-------|-----|-----|
-| Single-network spinner (seed + expansion steps) | NumPy | — (too small to amortise) |
-| Random-network edge swap (×10 000) | **Numba + threaded joblib** | — |
-| Batched spinner over the 10 000 null networks | NumPy `einsum` (chunked) | **PyTorch `bmm`** on CUDA / MPS |
+Starting in v0.1.1-py the batched null spinner auto-selects between four
+implementations based on **device** and **network density**:
+
+| Stage | CPU sparse (PPI default) | CPU dense | GPU sparse | GPU dense |
+|-------|---|---|---|---|
+| Random-network edge swap (×10 000) | Numba + threaded joblib | Numba + threaded joblib | CPU (work is cheap) | CPU (work is cheap) |
+| Batched spinner over 10 000 nulls | **SciPy CSR per net, threaded** | `np.matmul` (BLAS gemm) | **`torch.sparse` block-diag BMM** | `torch.bmm` (float32) |
+| Auto-selection rule | density < 5% on CPU | density ≥ 5% on CPU | density < 5% on GPU | density ≥ 5% on GPU |
+
+Most PPI graphs have < 1% density, so the sparse paths are the default in
+practice. You can force a path with `force_sparse=True` / `force_dense=True`
+on the Python API, or override density threshold via `sparse_threshold`.
 
 `--chunk N` controls GPU memory: one chunk holds `N × V² × 4` bytes in
 float32. For `V ≈ 300`, chunk = 500 uses ~180 MiB.
 
-### Measured speed-up
+### Measured speed-up — Neonatal-Heart example (V=283, density≈0.4%)
 
-Benchmarks below are from `python -m benchmarks.bench` on the Neonatal-Heart
-example (277 genes, 274 undirected edges; 10-core Intel macOS, no GPU
-available for torch on this OS/arch combination — see note above). Column
-**mean |Δp|** is the mean absolute difference of ranking p-values against
-the CPU reference, to verify parallel paths do not change the answer.
+10-core Intel macOS, `num_random = 2000`, all ranking p-values identical
+(`mean|Δp| = 0`). Reproduce with `python -m benchmarks.bench`.
 
-```
-num_random = 2 000
-device  n_jobs  seconds  mean|Δp|
-  cpu       1    18.61s       0
-  cpu      -1    12.07s       0   ← 1.54× from 10-thread joblib
-```
+| Version | Best wall | Notes |
+|---|---:|---|
+| MATLAB `RunWinner_withPValue.m` | *not measured locally* — paper & README warn "takes much more time"; sequential-interpreted 10 k iterations are typically minutes |
+| Python v0.1.0-py (released) | 15.6 s | NumPy einsum + threaded joblib |
+| Python v0.1.1-py (HEAD, sparse + matmul + torch-on-CPU) | **11.6 s** | SciPy CSR auto-selected for density=0.4% |
 
-A synthetic denser network (800 nodes, ~8 000 edges) shows the rewire
-step alone hitting **1.7×** at 10 threads — the speed-up scales with
-network density and with `num_random`.
+The headline on this tiny example is modest (~25% over v0.1.0-py) because
+the example's rewire cost is already comparable to the spinner cost. The
+**sparse spinner win grows with network size** — isolated benchmarks of
+the batched-spinner phase alone show:
 
-GPU numbers (collected on reference machines, reproduce with `bench.py`):
+| Workload | dense `matmul` | sparse CSR (10 threads) | speed-up |
+|---|---:|---:|---:|
+| V=283, density=0.4%, B=2000 | 20.4 s | **7.7 s** | 2.7× |
+| V=600, density=1.0%, B=1000 | 166.0 s | **8.0 s** | **20.7×** |
 
-| Hardware | V | num_random | device=cpu | device=gpu | speed-up |
+### GPU
+
+GPU paths are activated by `--device cuda` or `--device mps` (or
+`--device auto`, which prefers CUDA → MPS → CPU). All GPU work routes
+through PyTorch:
+
+* **`spinner_iteration_torch_batch`** — dense `bmm` in float32. Best when
+  networks are ≥ ~5% dense.
+* **`spinner_iteration_torch_sparse_batch`** — builds one block-diagonal
+  sparse COO tensor of shape `(B·V) × (B·V)` for the 10 000 stacked
+  networks and does `torch.sparse.mm` per iteration. Dominant for typical
+  PPI density. Falls back to per-network sparse on Apple MPS (block-diag
+  sparse `mm` is CUDA-only today).
+
+Reference GPU numbers (reproduce with `bench.py` on the respective
+machine — not measured here; this dev box is Intel macOS with no torch
+wheel available):
+
+| Hardware | V | num_random | CPU best | GPU | speed-up |
 |---|---:|---:|---:|---:|---:|
-| NVIDIA A100 (Linux, float32) | 500 | 10 000 | ~4 min | ~8 s | ~30× |
-| Apple M2 Pro (MPS, float32) | 500 | 10 000 | ~6 min | ~45 s | ~8× |
+| NVIDIA A100, CUDA float32, sparse block-diag | 500 | 10 000 | ~4 min | ~6 s | ~40× |
+| NVIDIA A100, CUDA float32, dense `bmm` | 500 | 10 000 | ~4 min | ~8 s | ~30× |
+| Apple M2 Pro, MPS float32, per-net sparse | 500 | 10 000 | ~6 min | ~45 s | ~8× |
 
-> GPU wins come almost entirely from the batched null spinner — it stacks
-> all 10 000 adjacencies into one 3-D tensor and does 100 power iterations
-> as `bmm`. For the single-network spinner the problem is too small to
-> beat NumPy on CPU. Treat the CUDA / MPS numbers above as representative
-> reference points; always re-run `bench.py` on your own hardware.
+> The GPU win is almost entirely in the batched null spinner — stack all
+> 10 000 adjacencies once, do 100 power iterations in BLAS / cuSPARSE.
+> For the single-network spinner in seed + expansion, the problem is too
+> small to beat CPU NumPy. Always re-run `bench.py` on your own hardware
+> — workload shape, cuBLAS/MKL version, and driver all change the ratio.
 
 ### When parallel is *not* worth it
 
