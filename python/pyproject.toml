@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "winner-net"
+version = "0.1.0"
+description = "WINNER: network-biology gene prioritization (Python port with CPU + GPU parallelism)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Jake Y. Chen", email = "jakechen@uab.edu"},
+    {name = "Thanh Nguyen"},
+    {name = "Zongliang Yue"},
+    {name = "Radomir Slominski"},
+    {name = "Robert Welner"},
+    {name = "Jianyi Zhang"},
+]
+maintainers = [
+    {name = "Jake Y. Chen", email = "jakechen@uab.edu"},
+]
+license = {text = "MIT"}
+keywords = ["network biology", "pagerank", "gene prioritization", "WINNER", "PPI"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.9",
+    "pandas>=1.5",
+    "statsmodels>=0.13",
+    "joblib>=1.2",
+]
+
+[project.optional-dependencies]
+gpu = ["torch>=2.0"]
+fast = ["numba>=0.57"]
+all = ["torch>=2.0", "numba>=0.57"]
+dev = ["pytest>=7", "pytest-cov", "torch>=2.0", "numba>=0.57"]
+
+[project.scripts]
+winner = "winner.cli:main_simple"
+winner-pvalue = "winner.cli:main_pvalue"
+
+[project.urls]
+"Original MATLAB" = "https://github.com/aimed-lab/WINNER"
+"Paper" = "https://doi.org/10.3389/fdata.2022.1016606"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+winner = ["py.typed"]
