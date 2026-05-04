@@ -153,6 +153,8 @@ use:
 
 ## License
 
-MIT (see [`LICENSE`](LICENSE)). The MATLAB code retains its original
-authorship; the Python port is maintained by Dr. Jake Y. Chen
-(`jakechen@uab.edu`) at the AIMed Lab, UAB.
+The MATLAB reference retains its existing notices and original authorship in
+[`LICENSE`](LICENSE). The Python port is distributed under the non-commercial
+research and education license in [`python/LICENSE`](python/LICENSE):
+commercial use requires a separate written license granted by Jake Y. Chen,
+AIMed Lab, UAB, or another authorized copyright holder.
