@@ -317,5 +317,5 @@ If you use WINNER in research, please cite the original paper:
 
 The WINNER Python port is free for non-commercial research, education,
 evaluation, and academic use. Commercial use requires a separate written
-license granted by Jake Y. Chen, AIMed Lab, UAB, or another authorized
+license granted by Dr. Jake Chen or another authorized
 copyright holder. See [LICENSE](LICENSE).

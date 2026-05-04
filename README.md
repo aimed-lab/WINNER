@@ -156,5 +156,5 @@ use:
 The MATLAB reference retains its existing notices and original authorship in
 [`LICENSE`](LICENSE). The Python port is distributed under the non-commercial
 research and education license in [`python/LICENSE`](python/LICENSE):
-commercial use requires a separate written license granted by Jake Y. Chen,
-AIMed Lab, UAB, or another authorized copyright holder.
+commercial use requires a separate written license granted by Dr. Jake Chen or
+another authorized copyright holder.

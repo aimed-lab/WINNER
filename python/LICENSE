@@ -3,8 +3,7 @@ WINNER Python Non-Commercial Research and Education License
 Copyright (c) 2022 Thanh Nguyen, Zongliang Yue, Radomir Slominski, Robert
 Welner, Jianyi Zhang, and Jake Y. Chen (original MATLAB WINNER implementation).
 
-Copyright (c) 2026 Jake Y. Chen and AIMed Lab, UAB (Python port and
-maintenance).
+Copyright (c) 2026 Dr. Jake Chen (Python port and maintenance).
 
 Permission is granted, free of charge, to use, copy, modify, and distribute
 the WINNER Python port and associated documentation files (the "Software")
@@ -17,8 +16,8 @@ service, platform, paid consulting engagement, revenue-generating workflow,
 commercial research and development program, or other activity intended to
 produce commercial advantage or monetary compensation.
 
-Commercial use requires a separate written license granted by Jake Y. Chen,
-AIMed Lab, UAB, or another authorized copyright holder.
+Commercial use requires a separate written license granted by Dr. Jake Chen or
+another authorized copyright holder.
 
 Redistributions, modified versions, and derivative works permitted under this
 license must retain this copyright notice, this license text, and a clear
